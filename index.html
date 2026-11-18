@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#3525CD">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>MiBilletera</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%233525CD'/%3E%3Cpath d='M6 8h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a1 1 0 0 1-1-1V8zm0 0a2 2 0 0 1 2-2h7' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E">
+  <style>
+    html, body { margin: 0; height: 100%; background: #F8F9FF; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    #app { border: 0; width: 100%; height: 100vh; height: 100dvh; display: block; }
+    #configurar { display: none; max-width: 520px; margin: 12vh auto; padding: 24px; background: #FFFFFF; border-radius: 16px;
+      box-shadow: 0 16px 32px -8px rgba(53, 37, 205, 0.25); color: #0B1C30; line-height: 1.5; }
+    #configurar h1 { font-size: 18px; margin: 0 0 8px; color: #3525CD; }
+    #configurar code { background: #EFF4FF; padding: 2px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <!--
+    MÁSCARA DE MiBilletera para GitHub Pages
+    ─────────────────────────────────────────
+    1. Pega abajo, en URL_APP, la URL de tu implementación de Apps Script (termina en /exec).
+    2. Sube este archivo como index.html a un repositorio público de GitHub.
+    3. Settings › Pages › Source: "Deploy from a branch" · Branch: main · carpeta / (root) · Save.
+    4. Abre https://TU-USUARIO.github.io/TU-REPO/ en el celular y "Agregar a pantalla de inicio".
+
+    Por qué existe: Google ejecuta la app dentro de un marco propio que no deja usar el micrófono.
+    Esta página SÍ puede usarlo: escucha tu voz aquí y le pasa el texto a la app (puente de voz).
+    La app de Apps Script debe estar implementada con acceso "Cualquier persona" y conviene activar el PIN.
+  -->
+  <iframe id="app" title="MiBilletera" allow="microphone; camera; clipboard-read; clipboard-write"></iframe>
+  <div id="configurar">
+    <h1>Falta la URL de tu app</h1>
+    <p>Edita este <code>index.html</code> y pega en <code>URL_APP</code> la dirección de tu implementación de Apps Script
+      (Implementar › Administrar implementaciones › URL de la aplicación web, termina en <code>/exec</code>).</p>
+  </div>
+
+  <script>
+    // ▼▼▼ PEGA AQUÍ LA URL DE TU APP (termina en /exec) ▼▼▼
+    const URL_APP = 'https://script.google.com/macros/s/AKfycbzBv6gLBFH34-TWAL4F6kqLUmzKG4AUEdOr5-qIOiiCXcToS0vs2CP7DiNXB9QNI59q/exec';
+    // ▲▲▲──────────────────────────────────────────────▲▲▲
+
+    // Solo se atienden pedidos que vienen de los marcos de Google Apps Script
+    const ORIGENES_PERMITIDOS = [/^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/, /^https:\/\/script\.google\.com$/];
+
+    const marco = document.getElementById('app');
+    const Reconocedor = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+    let reconocimiento = null;
+    let appLista = false;
+    let saludos = null;
+
+    if (URL_APP.indexOf('PEGA_AQUI') !== -1) {
+      marco.style.display = 'none';
+      document.getElementById('configurar').style.display = 'block';
+    } else {
+      marco.src = URL_APP;
+    }
+
+    // Envía un mensaje al marco de la app y a todos sus marcos internos (la app vive 2 niveles adentro)
+    function enviarATodos(mensaje, ventana) {
+      const destino = ventana || marco.contentWindow;
+      if (!destino) return;
+      try { destino.postMessage(mensaje, '*'); } catch (e) { /* marco no disponible */ }
+      try {
+        for (let i = 0; i < destino.frames.length; i++) enviarATodos(mensaje, destino.frames[i]);
+      } catch (e) { /* sin acceso a los marcos */ }
+    }
+
+    function responder(tipo, datos) {
+      enviarATodos(Object.assign({ origen: 'mibilletera-mascara', tipo: tipo }, datos || {}));
+    }
+
+    // Saludo repetido hasta que la app confirme: así sabe que hay micrófono disponible afuera
+    function saludar() {
+      appLista = false;
+      clearInterval(saludos);
+      let intentos = 0;
+      saludos = setInterval(function() {
+        intentos++;
+        if (appLista || intentos > 20) { clearInterval(saludos); return; }
+        responder('mascara-hola', { voz: !!Reconocedor });
+      }, 700);
+    }
+    marco.addEventListener('load', saludar);
+
+    function iniciarVoz(idioma) {
+      if (!Reconocedor) { responder('voz-error', { error: 'no-soportado' }); return; }
+      if (reconocimiento) { try { reconocimiento.stop(); } catch (e) { /* ya detenido */ } }
+      let final = '';
+      reconocimiento = new Reconocedor();
+      reconocimiento.lang = idioma || 'es-ES';
+      reconocimiento.interimResults = true;
+      reconocimiento.continuous = false;
+      reconocimiento.maxAlternatives = 1;
+      reconocimiento.onresult = function(e) {
+        let texto = '';
+        final = '';
+        for (let i = 0; i < e.results.length; i++) {
+          texto += e.results[i][0].transcript;
+          if (e.results[i].isFinal) final += e.results[i][0].transcript;
+        }
+        responder('voz-parcial', { texto: texto });
+      };
+      reconocimiento.onerror = function(e) { final = ''; responder('voz-error', { error: e.error || 'error' }); };
+      reconocimiento.onend = function() {
+        reconocimiento = null;
+        if (final.trim()) responder('voz-final', { texto: final.trim() });
+        else responder('voz-fin', {});
+      };
+      try { reconocimiento.start(); } catch (e) { responder('voz-error', { error: 'error' }); }
+    }
+
+    window.addEventListener('message', function(e) {
+      const permitido = ORIGENES_PERMITIDOS.some(function(re) { return re.test(e.origin); });
+      const d = e.data || {};
+      if (!permitido || d.origen !== 'mibilletera') return;
+      if (d.accion === 'app-lista') { appLista = true; clearInterval(saludos); return; }
+      if (d.accion === 'voz-iniciar') iniciarVoz(String(d.lang || 'es-ES').substring(0, 10));
+      if (d.accion === 'voz-detener' && reconocimiento) { try { reconocimiento.stop(); } catch (err) { /* ya detenido */ } }
+    });
+  </script>
+</body>
+</html>
+
+
